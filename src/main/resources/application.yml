@@ -1,0 +1,189 @@
+spring:
+  application:
+    name: performance-service
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/perfdb?reWriteBatchedInserts=true}
+    username: ${SPRING_DATASOURCE_USERNAME:perf}
+    password: ${SPRING_DATASOURCE_PASSWORD:perf}
+    hikari:
+      pool-name: PerfPool
+      maximum-pool-size: 20
+      minimum-idle: 10
+      connection-timeout: 2000
+      validation-timeout: 1000
+      idle-timeout: 300000
+      max-lifetime: 1740000
+      keepalive-time: 120000
+      leak-detection-threshold: 10000
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/schema.sql
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 50
+          time_zone: UTC
+        order_inserts: true
+        order_updates: true
+        default_batch_fetch_size: 32
+        query:
+          in_clause_parameter_padding: true
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: 6379
+      timeout: 500ms
+      connect-timeout: 500ms
+      lettuce:
+        pool:
+          max-active: 32
+          max-idle: 16
+          min-idle: 4
+          max-wait: 200ms
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+  security:
+    user:
+      name: ${APP_USER:perf}
+      password: ${APP_PASSWORD:change-me}
+      roles: API
+
+server:
+  port: 8080
+  shutdown: graceful
+  compression:
+    enabled: true
+    min-response-size: 1024
+  tomcat:
+    max-connections: 20000
+    accept-count: 1000
+    connection-timeout: 5s
+
+app:
+  cache:
+    l1:
+      max-size: 10000
+      ttl-seconds: 30
+    l2:
+      ttl-seconds: 300
+  kafka:
+    partitions: 12
+    replicas: 1
+    consumer-concurrency: 3
+    consumer-group: performance-service-group
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        register-health-indicator: true
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 50
+        minimum-number-of-calls: 20
+        failure-rate-threshold: 50
+        slow-call-rate-threshold: 80
+        slow-call-duration-threshold: 1s
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 5
+        automatic-transition-from-open-to-half-open-enabled: true
+        ignore-exceptions:
+          - "com.enterprise.performance.exception.GlobalExceptionHandler$TransactionNotFoundException"
+          - io.github.resilience4j.bulkhead.BulkheadFullException
+    instances:
+      transactionRead:
+        base-config: default
+      transactionWrite:
+        base-config: default
+        slow-call-duration-threshold: 2s
+        wait-duration-in-open-state: 15s
+        ignore-exceptions:
+          - org.springframework.dao.DataIntegrityViolationException
+          - io.github.resilience4j.bulkhead.BulkheadFullException
+      transactionList:
+        base-config: default
+        sliding-window-type: TIME_BASED
+        sliding-window-size: 30
+        slow-call-duration-threshold: 1500ms
+  retry:
+    configs:
+      default:
+        max-attempts: 3
+        wait-duration: 100ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - org.springframework.dao.TransientDataAccessException
+          - org.springframework.dao.DataAccessResourceFailureException
+          - org.springframework.transaction.CannotCreateTransactionException
+          - java.io.IOException
+        ignore-exceptions:
+          - "com.enterprise.performance.exception.GlobalExceptionHandler$TransactionNotFoundException"
+    instances:
+      transactionRead:
+        base-config: default
+      transactionWrite:
+        base-config: default
+        wait-duration: 200ms
+        retry-exceptions:
+          - org.springframework.dao.TransientDataAccessException
+          - org.springframework.dao.DataAccessResourceFailureException
+          - org.springframework.transaction.CannotCreateTransactionException
+          - org.springframework.dao.DataIntegrityViolationException
+          - java.io.IOException
+  bulkhead:
+    instances:
+      transactionRead:
+        max-concurrent-calls: 100
+        max-wait-duration: 0
+      transactionWrite:
+        max-concurrent-calls: 50
+        max-wait-duration: 500ms
+      transactionList:
+        max-concurrent-calls: 40
+        max-wait-duration: 0
+  timelimiter:
+    instances:
+      transactionList:
+        timeout-duration: 2s
+        cancel-running-future: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,circuitbreakers,circuitbreakerevents
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when-authorized
+  health:
+    circuitbreakers:
+      enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+    tags:
+      application: ${spring.application.name}
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLE_RATE:0.1}
+  zipkin:
+    tracing:
+      endpoint: ${MANAGEMENT_ZIPKIN_TRACING_ENDPOINT:http://localhost:9411/api/v2/spans}
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name},%X{traceId:-},%X{spanId:-}]"
+  level:
+    root: INFO
+    com.enterprise.performance: INFO

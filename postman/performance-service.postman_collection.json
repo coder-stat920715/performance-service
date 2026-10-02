@@ -1,0 +1,1449 @@
+{
+  "info": {
+    "name": "performance-service",
+    "description": "Postman collection for the Spring Boot performance-service. Run folders in order 00 -> 05 with the Collection Runner. Folder 06 is manual (failure injection). See TESTING.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "basic",
+    "basic": [
+      {
+        "key": "username",
+        "value": "{{username}}",
+        "type": "string"
+      },
+      {
+        "key": "password",
+        "value": "{{password}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "accountId",
+      "value": "acc-postman-1"
+    },
+    {
+      "key": "reference",
+      "value": ""
+    },
+    {
+      "key": "transactionId",
+      "value": ""
+    },
+    {
+      "key": "cursor",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "00 - Health & Security",
+      "item": [
+        {
+          "name": "Health (no auth)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            },
+            "description": "Public endpoint. Confirms the app, Postgres, Redis and circuit-breaker health indicators are UP.",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Readiness probe (no auth)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('readiness UP', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/health/readiness",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "health",
+                "readiness"
+              ]
+            },
+            "description": "Kubernetes-style readiness probe.",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "API without credentials -> 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            },
+            "description": "Security: protected endpoints must reject anonymous calls.",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "API with wrong password -> 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            },
+            "description": "Security: wrong credentials are rejected.",
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "perf",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "wrong-password",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 - Write path (command side)",
+      "item": [
+        {
+          "name": "Create transaction",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ref = 'ref-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);",
+                  "pm.collectionVariables.set('reference', ref);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const j = pm.response.json();",
+                  "pm.test('status is PENDING', () => pm.expect(j.status).to.eql('PENDING'));",
+                  "pm.test('id is a UUID', () => pm.expect(j.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/));",
+                  "pm.test('Location header points at the new resource', () => pm.expect(pm.response.headers.get('Location')).to.include(j.id));",
+                  "pm.test('amount and currency echoed', () => { pm.expect(j.amount).to.eql(125.5); pm.expect(j.currency).to.eql('USD'); });",
+                  "pm.collectionVariables.set('transactionId', j.id);",
+                  "pm.collectionVariables.set('cursor', j.createdAt);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Command path: Bulkhead -> CircuitBreaker -> Retry -> @Transactional insert -> Kafka event after commit. Saves transactionId for later requests.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reference\": \"{{reference}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"amount\": 125.5000,\n  \"currency\": \"USD\",\n  \"type\": \"CREDIT\",\n  \"description\": \"Postman test transaction\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create transaction - idempotent replay",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('same id as first call', () => pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('transactionId')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Re-sends the SAME reference. Must return the existing row (same id), not create a duplicate.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reference\": \"{{reference}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"amount\": 125.5000,\n  \"currency\": \"USD\",\n  \"type\": \"CREDIT\",\n  \"description\": \"Postman test transaction\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Read path (async + caching)",
+      "item": [
+        {
+          "name": "Get by id (immediately)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status is a valid state', () => pm.expect(['PENDING','COMPLETED']).to.include(pm.response.json().status));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/{{transactionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions",
+                "{{transactionId}}"
+              ]
+            },
+            "description": "Right after creation. Status may be PENDING or already COMPLETED. PENDING rows are never cached."
+          }
+        },
+        {
+          "name": "Get by id - poll until COMPLETED",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(function () {}, 500);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "const tries = parseInt(pm.collectionVariables.get('pollTries') || '0');",
+                  "if (j.status !== 'COMPLETED' && tries < 10) {",
+                  "  pm.collectionVariables.set('pollTries', String(tries + 1));",
+                  "  postman.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.collectionVariables.unset('pollTries');",
+                  "  pm.test('status COMPLETED (Kafka consumer finished)', () => pm.expect(j.status).to.eql('COMPLETED'));",
+                  "  pm.test('updatedAt >= createdAt', () => pm.expect(new Date(j.updatedAt) >= new Date(j.createdAt)).to.be.true);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/{{transactionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions",
+                "{{transactionId}}"
+              ]
+            },
+            "description": "Proves the Kafka consumer processed the event. Under the Collection Runner this request re-runs itself (max 10 tries, 500 ms apart). When sending manually, just click Send again until status is COMPLETED."
+          }
+        },
+        {
+          "name": "Get by id - served from cache",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status COMPLETED', () => pm.expect(pm.response.json().status).to.eql('COMPLETED'));",
+                  "console.log('Cached read took ' + pm.response.responseTime + ' ms');",
+                  "pm.test('responds quickly (< 250 ms)', () => pm.expect(pm.response.responseTime).to.be.below(250));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/{{transactionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions",
+                "{{transactionId}}"
+              ]
+            },
+            "description": "COMPLETED rows are now cached (L1 Caffeine, 30 s). Expect a very low response time. Confirm via /actuator/metrics/cache.gets?tag=result:hit."
+          }
+        },
+        {
+          "name": "Get by id - after L1 expiry (L2 Redis hit)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Wait for the Caffeine L1 TTL (30 s) to elapse",
+                  "setTimeout(function () {}, 31000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('still COMPLETED', () => pm.expect(pm.response.json().status).to.eql('COMPLETED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/{{transactionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions",
+                "{{transactionId}}"
+              ]
+            },
+            "description": "Pre-request waits 31 s so the 30 s L1 entry expires. The read then misses L1 and hits L2 Redis (TTL 300 s): perf_cache_requests_total{tier=\"l2\",result=\"hit\"} increases."
+          }
+        },
+        {
+          "name": "Get by id - unknown id -> 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 404', () => pm.response.to.have.status(404));",
+                  "pm.test('Content is a ProblemDetail', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.status).to.eql(404);",
+                  "  pm.expect(j.title).to.eql('Not Found');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            },
+            "description": "Not-found is ignored by the circuit breaker and retry (it is not a system failure)."
+          }
+        },
+        {
+          "name": "Get by id - malformed id -> 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('Content is a ProblemDetail', () => {",
+                  "  const j = pm.response.json();",
+                  "  pm.expect(j.status).to.eql(400);",
+                  "  pm.expect(j.title).to.eql('Bad Request');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/not-a-uuid",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions",
+                "not-a-uuid"
+              ]
+            },
+            "description": "Type-mismatch handling."
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Query path (keyset pagination)",
+      "item": [
+        {
+          "name": "Seed A",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ref = 'ref-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);",
+                  "pm.collectionVariables.set('reference', ref);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('PENDING or already processed', () => pm.expect(['PENDING','COMPLETED']).to.include(pm.response.json().status));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Creates an extra transaction for the same account so pagination can be tested.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reference\": \"{{reference}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"amount\": 125.5000,\n  \"currency\": \"USD\",\n  \"type\": \"CREDIT\",\n  \"description\": \"Postman test transaction\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Seed B",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ref = 'ref-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);",
+                  "pm.collectionVariables.set('reference', ref);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('PENDING or already processed', () => pm.expect(['PENDING','COMPLETED']).to.include(pm.response.json().status));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Creates an extra transaction for the same account so pagination can be tested.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reference\": \"{{reference}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"amount\": 125.5000,\n  \"currency\": \"USD\",\n  \"type\": \"CREDIT\",\n  \"description\": \"Postman test transaction\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Seed C",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ref = 'ref-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);",
+                  "pm.collectionVariables.set('reference', ref);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('PENDING or already processed', () => pm.expect(['PENDING','COMPLETED']).to.include(pm.response.json().status));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Creates an extra transaction for the same account so pagination can be tested.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reference\": \"{{reference}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"amount\": 125.5000,\n  \"currency\": \"USD\",\n  \"type\": \"CREDIT\",\n  \"description\": \"Postman test transaction\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "List by account - page 1 (limit 2)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const a = pm.response.json();",
+                  "pm.test('returns at most 2 items', () => pm.expect(a.length).to.be.within(1, 2));",
+                  "pm.test('sorted by createdAt desc', () => { for (let i = 1; i < a.length; i++) pm.expect(new Date(a[i-1].createdAt) >= new Date(a[i].createdAt)).to.be.true; });",
+                  "pm.test('all rows belong to the account', () => a.forEach(t => pm.expect(t.accountId).to.eql(pm.collectionVariables.get('accountId'))));",
+                  "pm.collectionVariables.set('cursor', a[a.length - 1].createdAt);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/account/{{accountId}}?limit=2",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions",
+                "account",
+                "{{accountId}}"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "2"
+                }
+              ]
+            },
+            "description": "Async query on a virtual thread, guarded by Bulkhead + CircuitBreaker + TimeLimiter (2 s). Newest first."
+          }
+        },
+        {
+          "name": "List by account - page 2 (keyset cursor)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const a = pm.response.json();",
+                  "const cursor = new Date(pm.collectionVariables.get('cursor'));",
+                  "pm.test('every row is older than the cursor', () => a.forEach(t => pm.expect(new Date(t.createdAt) < cursor).to.be.true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/account/{{accountId}}?before={{cursor}}&limit=2",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions",
+                "account",
+                "{{accountId}}"
+              ],
+              "query": [
+                {
+                  "key": "before",
+                  "value": "{{cursor}}"
+                },
+                {
+                  "key": "limit",
+                  "value": "2"
+                }
+              ]
+            },
+            "description": "Uses `before` = createdAt of the last item from page 1. No OFFSET; served by index (account_id, created_at DESC)."
+          }
+        },
+        {
+          "name": "List by account - limit=0 is clamped to 1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('exactly 1 item', () => pm.expect(pm.response.json().length).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/account/{{accountId}}?limit=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions",
+                "account",
+                "{{accountId}}"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "Service clamps limit into [1, 200]."
+          }
+        },
+        {
+          "name": "List by account - limit=1000 is capped at 200",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('at most 200 items', () => pm.expect(pm.response.json().length).to.be.at.most(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/account/{{accountId}}?limit=1000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions",
+                "account",
+                "{{accountId}}"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "1000"
+                }
+              ]
+            },
+            "description": "Upper bound protects the database."
+          }
+        },
+        {
+          "name": "List by account - unknown account -> empty array",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('empty array', () => pm.expect(pm.response.json()).to.eql([]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/account/no-such-account",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions",
+                "account",
+                "no-such-account"
+              ]
+            },
+            "description": "Empty result is a valid 200."
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Validation & error handling",
+      "item": [
+        {
+          "name": "Create - empty body -> 400 with field errors",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "const e = pm.response.json().errors;",
+                  "pm.test('reports every required field', () => ['reference','accountId','amount','currency','type'].forEach(f => pm.expect(e).to.have.property(f)));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Bean Validation on the request record.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create - negative amount -> 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('amount error', () => pm.expect(pm.response.json().errors).to.have.property('amount'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Amount must be >= 0.0001.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reference\":\"bad-1\",\"accountId\":\"acc-1\",\"amount\":-5,\"currency\":\"USD\",\"type\":\"DEBIT\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create - lowercase currency -> 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('currency error', () => pm.expect(pm.response.json().errors).to.have.property('currency'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Currency must be 3 upper-case letters.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reference\":\"bad-2\",\"accountId\":\"acc-1\",\"amount\":5,\"currency\":\"usd\",\"type\":\"DEBIT\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create - too many decimals -> 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('amount error', () => pm.expect(pm.response.json().errors).to.have.property('amount'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Max 4 fraction digits.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reference\":\"bad-3\",\"accountId\":\"acc-1\",\"amount\":1.123456,\"currency\":\"USD\",\"type\":\"DEBIT\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create - invalid enum -> 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "type must be CREDIT, DEBIT or TRANSFER.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reference\":\"bad-4\",\"accountId\":\"acc-1\",\"amount\":5,\"currency\":\"USD\",\"type\":\"REFUND\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create - malformed JSON -> 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Unparseable body.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"reference\": ",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - Observability",
+      "item": [
+        {
+          "name": "Prometheus metrics (no auth)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const t = pm.response.text();",
+                  "pm.test('kafka published counter', () => pm.expect(t).to.include('perf_kafka_published_total'));",
+                  "pm.test('kafka consumed counter', () => pm.expect(t).to.include('perf_kafka_consumed_total'));",
+                  "pm.test('L2 cache counter', () => pm.expect(t).to.include('perf_cache_requests_total'));",
+                  "pm.test('DB read timer', () => pm.expect(t).to.include('perf_db_read_seconds_count'));",
+                  "pm.test('Hikari pool max = 20', () => pm.expect(t).to.match(/hikaricp_connections_max\\{pool=\"PerfPool\"\\} 20(\\.0)?/));",
+                  "pm.test('Hikari pool min idle = 10', () => pm.expect(t).to.match(/hikaricp_connections_min\\{pool=\"PerfPool\"\\} 10(\\.0)?/));",
+                  "pm.test('circuit breaker state metric', () => pm.expect(t).to.include('resilience4j_circuitbreaker_state'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/prometheus",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "prometheus"
+              ]
+            },
+            "description": "Custom + framework metrics. Run after folders 01-03 so the counters exist.",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Caffeine L1 hits (metrics)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('metric present', () => pm.expect(pm.response.json().name).to.eql('cache.gets'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/metrics/cache.gets?tag=result:hit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "metrics",
+                "cache.gets"
+              ],
+              "query": [
+                {
+                  "key": "tag",
+                  "value": "result:hit"
+                }
+              ]
+            },
+            "description": "Shows L1 hit/miss counts. Add the tag filter to see only hits."
+          }
+        },
+        {
+          "name": "Circuit breakers",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "const cb = pm.response.json().circuitBreakers;",
+                  "['transactionRead','transactionWrite','transactionList'].forEach(n => pm.test(n + ' is CLOSED', () => pm.expect(cb[n].state).to.eql('CLOSED')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/circuitbreakers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "circuitbreakers"
+              ]
+            },
+            "description": "State of all three breakers. All should be CLOSED in a healthy system."
+          }
+        },
+        {
+          "name": "Circuit breaker events",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('has events array', () => pm.expect(pm.response.json()).to.have.property('circuitBreakerEvents'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/circuitbreakerevents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "circuitbreakerevents"
+              ]
+            },
+            "description": "Recent successes, failures, state transitions and rejected calls."
+          }
+        },
+        {
+          "name": "Health with details",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('components visible', () => pm.expect(pm.response.json()).to.have.property('components'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            },
+            "description": "Authenticated call shows component details (db, redis, circuit breakers, disk)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 - Failure injection (manual, see TESTING.md)",
+      "item": [
+        {
+          "name": "Read during Postgres outage -> 503",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 503', () => pm.response.to.have.status(503));",
+                  "pm.test('Retry-After header present', () => pm.expect(pm.response.headers.get('Retry-After')).to.eql('5'));",
+                  "pm.test('ProblemDetail title', () => pm.expect(pm.response.json().title).to.eql('Service Temporarily Degraded'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions/{{transactionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions",
+                "{{transactionId}}"
+              ]
+            },
+            "description": "Run ONLY after `docker compose stop postgres` and after the L1/L2 entries expired (or use a new PENDING id). Expect 503 + Retry-After once retries are exhausted, then fast 503s when the breaker is OPEN."
+          }
+        },
+        {
+          "name": "Write during Postgres outage -> 503",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ref = 'ref-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);",
+                  "pm.collectionVariables.set('reference', ref);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 503', () => pm.response.to.have.status(503));",
+                  "pm.test('Retry-After header present', () => pm.expect(pm.response.headers.get('Retry-After')).to.eql('5'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "transactions"
+              ]
+            },
+            "description": "Run ONLY with Postgres stopped. Write path degrades with 503 and Retry-After.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reference\": \"{{reference}}\",\n  \"accountId\": \"{{accountId}}\",\n  \"amount\": 125.5000,\n  \"currency\": \"USD\",\n  \"type\": \"CREDIT\",\n  \"description\": \"Postman test transaction\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
